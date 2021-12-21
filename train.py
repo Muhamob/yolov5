@@ -126,7 +126,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
     # Freeze
     freeze = [f'model.{x}.' for x in range(freeze)]  # layers to freeze
     for k, v in model.named_parameters():
-        v.requires_grad = True  # train all layers
+        v.requires_grad = True  # train gall layers
         if any(x in k for x in freeze):
             LOGGER.info(f'freezing {k}')
             v.requires_grad = False
@@ -155,8 +155,10 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             g1.append(v.weight)
 
     if opt.adam:
+        print("ADAM lr0", hyp['lr0'])
         optimizer = Adam(g0, lr=hyp['lr0'], betas=(hyp['momentum'], 0.999))  # adjust beta1 to momentum
     else:
+        print("SGD lr0", hyp['lr0'])
         optimizer = SGD(g0, lr=hyp['lr0'], momentum=hyp['momentum'], nesterov=True)
 
     optimizer.add_param_group({'params': g1, 'weight_decay': hyp['weight_decay']})  # add g1 with weight_decay
@@ -297,14 +299,22 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
             # Warmup
             if ni <= nw:
+                print("warmup:", ni)
                 xi = [0, nw]  # x interp
+                print("batch indices", ni, i, nb, epoch, xi)
                 # compute_loss.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
                 accumulate = max(1, np.interp(ni, xi, [1, nbs / batch_size]).round())
+                print("\taccumulate:", accumulate)
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
+                    print("\tprev lr:", x['lr'])
                     x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                    print("\tafter lr:", x['lr'])
                     if 'momentum' in x:
+                        print("\tprev momentum:", x['momentum'])
                         x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
+                        print("\tafter momentum:", x['momentum'])
+                    print("-"*10)
 
             # Multi-scale
             if opt.multi_scale:
@@ -317,6 +327,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
             # Forward
             with amp.autocast(enabled=cuda):
                 pred = model(imgs)  # forward
+                print("Compute loss")
                 loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
                 if RANK != -1:
                     loss *= WORLD_SIZE  # gradient averaged between devices in DDP mode
@@ -346,6 +357,7 @@ def train(hyp,  # path/to/hyp.yaml or hyp dictionary
 
         # Scheduler
         lr = [x['lr'] for x in optimizer.param_groups]  # for loggers
+        print("lr", lr)
         scheduler.step()
 
         if RANK in [-1, 0]:

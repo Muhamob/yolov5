@@ -14,6 +14,7 @@ from itertools import repeat
 from multiprocessing.pool import Pool, ThreadPool
 from pathlib import Path
 from threading import Thread
+from typing import Union
 from zipfile import ZipFile
 
 import cv2
@@ -156,6 +157,32 @@ class _RepeatSampler:
             yield from iter(self.sampler)
 
 
+def preprocess_image(
+        img: Image.Image,
+        img_size: Union[int, tuple] = 640,
+        stride: int = 32,
+        auto: bool = True
+) -> Image.Image:
+    """Reshape, fill and transpose image
+
+    Input:
+        img: Image.Image
+        img_size: output image size
+        stride: stride
+        auto: bool idk
+    Returns:
+        Image.Image
+    """
+    # Resize image and fill padding
+    img_new = letterbox(img, img_size, stride=stride, auto=auto)[0]
+
+    # Convert
+    img_new = img_new.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
+    img_new = np.ascontiguousarray(img_new)
+
+    return img_new
+
+
 class LoadImages:
     # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
     def __init__(self, path, img_size=640, stride=32, auto=True):
@@ -220,12 +247,7 @@ class LoadImages:
             assert img0 is not None, f'Image Not Found {path}'
             s = f'image {self.count}/{self.nf} {path}: '
 
-        # Padded resize
-        img = letterbox(img0, self.img_size, stride=self.stride, auto=self.auto)[0]
-
-        # Convert
-        img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
-        img = np.ascontiguousarray(img)
+        img = preprocess_image(img, self.img_size, self.stride, self.auto)
 
         return path, img, img0, self.cap, s
 
@@ -555,6 +577,7 @@ class LoadImagesAndLabels(Dataset):
 
         hyp = self.hyp
         mosaic = self.mosaic and random.random() < hyp['mosaic']
+
         if mosaic:
             # Load mosaic
             img, labels = load_mosaic(self, index)
@@ -661,6 +684,8 @@ class LoadImagesAndLabels(Dataset):
 def load_image(self, i):
     # loads 1 image from dataset index 'i', returns im, original hw, resized hw
     im = self.imgs[i]
+
+    out_im, hw0, hw = None, None, None
     if im is None:  # not cached in ram
         npy = self.img_npy[i]
         if npy and npy.exists():  # load npy
@@ -672,11 +697,15 @@ def load_image(self, i):
         h0, w0 = im.shape[:2]  # orig hw
         r = self.img_size / max(h0, w0)  # ratio
         if r != 1:  # if sizes are not equal
-            im = cv2.resize(im, (int(w0 * r), int(h0 * r)),
+            im = cv2.resize(im,
+                            (int(w0 * r), int(h0 * r)),
                             interpolation=cv2.INTER_AREA if r < 1 and not self.augment else cv2.INTER_LINEAR)
-        return im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
+        # return im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
+        out_im, hw0, hw = im, (h0, w0), im.shape[:2]
     else:
-        return self.imgs[i], self.img_hw0[i], self.img_hw[i]  # im, hw_original, hw_resized
+        out_im, hw0, hw = self.imgs[i], self.img_hw0[i], self.img_hw[i]  # im, hw_original, hw_resized
+
+    return out_im, hw0, hw
 
 
 def load_mosaic(self, index):

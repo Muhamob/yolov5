@@ -88,17 +88,16 @@ class QFocalLoss(nn.Module):
             return loss
 
 
-class ComputeLoss:
+class YOLOLoss(nn.Module):
     # Compute losses
-    def __init__(self, model, autobalance=False, device="cpu"):
+    def __init__(self, model, autobalance=False):
+        super().__init__()
         self.sort_obj_iou = False
         h = model.hyp
 
-        self.device = device
-
         # Define criteria
-        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']], device=self.device))
-        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']], device=self.device))
+        BCEcls = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['cls_pw']]))
+        BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([h['obj_pw']]))
 
         # Class label smoothing https://arxiv.org/pdf/1902.04103.pdf eqn 3
         self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))  # positive, negative BCE targets
@@ -112,12 +111,13 @@ class ComputeLoss:
         self.balance = {3: [4.0, 1.0, 0.4]}.get(det.nl, [4.0, 1.0, 0.25, 0.06, 0.02])  # P3-P7
         self.ssi = list(det.stride).index(16) if autobalance else 0  # stride 16 index
         self.BCEcls, self.BCEobj, self.gr, self.hyp, self.autobalance = BCEcls, BCEobj, 1.0, h, autobalance
-        for k in 'na', 'nc', 'nl', 'anchors':
-            setattr(self, k, getattr(det, k))
 
-        # self.register_buffer("anchors", getattr(det, "anchors"))
+        self.na = getattr(det, 'na')
+        self.nc = getattr(det, 'nc')
+        self.nl = getattr(det, 'nl')
+        self.register_buffer('anchors', getattr(det, 'anchors'))
 
-    def __call__(self, p, targets):  # predictions, targets, model
+    def forward(self, p, targets):  # predictions, targets, model
         lcls, lbox, lobj = torch.zeros(1).type_as(targets), torch.zeros(1).type_as(targets), torch.zeros(1).type_as(targets)
         tcls, tbox, indices, anchors = self.build_targets(p, targets)  # targets
 
